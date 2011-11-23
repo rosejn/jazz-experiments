@@ -1,0 +1,9 @@
+.cake
+*.swp
+*.swo
+*.class
+*.scsyndef
+lib
+ext
+pom.xml
+*.jar
