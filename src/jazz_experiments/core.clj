@@ -3,6 +3,7 @@
         [overtone.inst synth drum]
         clojure.repl))
 
+; ok, here are some quick demos inspired by the current thread on the Overtone list...
 (def diatonic-trichords
   {:i   :major
    :ii  :minor
@@ -42,7 +43,9 @@
    [:i :iv :v :v]
    [:i :i :iv :v]
    [:i :iv :i :v]
+   [:i :v :vi :iv]
    [:i :iv :v :iv]])
+
 
 (def blues-progressions
   [[:i :i :i :i :iv :iv :i :i :v :iv :i :i]])
@@ -87,7 +90,8 @@
   [t len inst chords vel]
   (when chords
     (let [next-t (+ t len)
-          notes (sort (:notes (first chords)))]
+          notes (:notes (first chords))]
+      (at t (inst (- (first notes) 12) vel))
       (play-notes t inst notes vel)
       (apply-at next-t #'chord-player [next-t len inst (next chords) vel]))))
 
@@ -105,6 +109,30 @@
         notes)))
 
 (def strum #'arpeggiate-notes)
+
+(defn broken-chord-player
+  "Play a progression using block chords (all notes at same time)."
+  [t len inst chords vel speed]
+  (when chords
+    (let [next-t (+ t len)
+          notes (:notes (first chords))
+          broken [(nth notes 2) (first notes) (second notes) (first notes)]
+          broken-notes (concat broken broken)
+          synco (+ t (* 3.5 speed))]
+      ; bass note
+      (at t (inst (- (first notes) 12) (- vel 15)))
+
+      ; broken or rocked
+      (if (zero? (rand-int 2))
+        (strum synco inst (choose [notes broken-notes]) vel speed)
+        (do
+          (play-notes synco inst (next notes) (- vel 20))
+          (play-notes (+ synco (* 1 speed)) inst [(first notes)] vel)
+          (play-notes (+ synco (* 2 speed)) inst (next notes) (- vel 20))
+          (play-notes (+ synco (* 3 speed)) inst [(first notes)] vel)
+          ))
+
+      (apply-at next-t #'broken-chord-player [next-t len inst (next chords) vel speed]))))
 
 (defn arp-player
   "Play the chords in a progression in arpeggios."
@@ -135,20 +163,21 @@
 
 (definst z
   [note 60 amp 0.8 len 0.4
-   attack 0.01 decay 0.01 sustain 0.3 release 0.2
-   fattack 0.08 fdecay 0.01 fsustain 0.6 frelease 0.2]
+   attack 0.05 decay 0.2 sustain 0.7 release 0.2
+   fattack 0.12 fdecay 0.1 fsustain 0.9 frelease 0.02]
   (let [gate (env-gen (perc 0 len) 1 :action FREE)
         freq (midicps note)
         osc1 (saw [freq (* 1.1 freq)])
         osc2 (bpf (white-noise) freq 0.1)
         oscs (+ osc1 [osc2 osc2])
         amp-env (env-gen (adsr attack decay sustain release) gate :action FREE)
-        amped (* 5 amp-env oscs)
-        dist (tanh (distort amped))
+        amped (* 5 oscs)
+        dist (distort amped)
+        enved (* dist amp-env)
         f-env (env-gen (adsr fattack fdecay fsustain frelease) gate :action FREE)
-        filt (rlpf dist (* 10 freq f-env) 0.4)
-        verb (free-verb2 (first filt) (second filt) :mix 0.5 :room 0.6 :damp 0.9)]
-    (* amp dist)))
+        verb (free-verb (first enved) (second enved) :mix 0.5 :room 0.8 :damp 0.9)
+        filt (lpf verb (* 20 freq f-env))]
+    (* amp filt)))
 
 (definst ding [note 60 amp 0.4 a 0.2 b 0.2]
   (let [snd (sin-osc (midicps note))
@@ -178,7 +207,7 @@
 )
 
 ; modify bar-ms and re-eval these two to change the tempo in these examples
-(def bar-ms 1000)
+(def bar-ms 1200)
 (def strum-ms (/ bar-ms 4))
 
 (def bass-chords
@@ -190,31 +219,51 @@
          (update-all :notes #(invert-chord % 2))))
 
 (comment
-
-; best played with the piano (otherwise it sounds super cheesy
+; best played with the piano (otherwise it sounds super cheesy)
 (shuffle-player (+ 100 (now)) 2200 #'p
                 treble-chords bass-chords
                 60)
 
 ; Eval each of these to hear various progressions played in different ways
 
-
 (chord-player (+ 100 (now)) bar-ms #'p
               (chord-progression :Bb3 :diatonic diatonic-trichords
                                  (expand-by 2 (nth jazz-progressions 0)))
               60)
+
+(broken-chord-player (+ 100 (now)) bar-ms #'p
+              (chord-progression :Bb3 :diatonic diatonic-trichords
+                                 (expand-by 2 (nth jazz-progressions 0)))
+              60 strum-ms)
 
 (chord-player (+ 100 (now)) bar-ms #'p
               (chord-progression :a4 :diatonic diatonic-tetrachords
                                  (nth blues-progressions 0))
               60)
 
-; a typical jazz progression
 (arp-player (+ 100 (now)) bar-ms #'p
-            (chord-progression :e3 :diatonic diatonic-tetrachords
+            (chord-progression :e3 :diatonic diatonic-trichords
                                (expand-by 2 (nth jazz-progressions 2)))
             60 strum-ms)
-(stop)
+
+(broken-chord-player (+ 100 (now)) (* 1.5 bar-ms) #'p
+              (chord-progression :e3 :diatonic diatonic-trichords
+                                 (expand-by 2 (nth jazz-progressions 2)))
+              60 (* 1.5 strum-ms))
+
+; and with some random inversions
+(broken-chord-player (+ 100 (now)) (* 1.5 bar-ms) #'p
+              (-> (chord-progression :e3 :diatonic diatonic-trichords
+                                 (expand-by 2 (nth jazz-progressions 2)))
+                (update-all :notes #(invert-chord % (- (rand-int 2) 1))))
+              60 (* 1.5 strum-ms))
+
+; with jazz chords and wider range of inversions
+(broken-chord-player (+ 100 (now)) (* 1.5 bar-ms) #'p
+              (-> (chord-progression :e3 :diatonic diatonic-tetrachords
+                                 (expand-by 2 (nth jazz-progressions 2)))
+                (update-all :notes #(invert-chord % (- (rand-int 4) 2))))
+              60 (* 1.5 strum-ms))
 
 (arp-player (+ 100 (now)) bar-ms #'p
             (-> (chord-progression :e4 :diatonic diatonic-tetrachords
@@ -232,7 +281,7 @@
 ; randomized chord inversions
 (arp-player (+ 100 (now)) bar-ms #'p
             (-> (chord-progression :f4 :diatonic diatonic-tetrachords
-                                   (expand-by 3 (nth jazz-progressions 3)))
+                                   (expand-by 2 (nth jazz-progressions 3)))
               (update-all :notes #(invert-chord % (- (rand-int 4) 2))))
             60 strum-ms)
 
@@ -247,5 +296,6 @@
 
 ; define left and right hand chords, with left hand playing 6th chords and right
 ; hand playing the second inversion of 7th chords
+
 
 )
